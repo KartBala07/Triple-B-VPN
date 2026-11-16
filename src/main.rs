@@ -8,6 +8,7 @@
 //!   hvpn down | status
 
 mod crypto;
+mod daemon;
 mod netcfg;
 mod proto;
 mod tun;
@@ -118,6 +119,13 @@ fn main() {
         "up" => up(rest),
         "serve" => serve(rest),
         "down" => down(),
+        "daemon" => {
+            let sock = flag(rest, "--socket").unwrap_or_else(|| daemon::DEFAULT_SOCKET.to_string());
+            if let Err(e) = daemon::run_daemon(&sock) {
+                eprintln!("hvpn: daemon error: {}", e);
+                exit(1);
+            }
+        }
         "status" => status(),
         "help" | "-h" | "--help" => usage(),
         other => {
@@ -137,6 +145,7 @@ fn usage() {
          \x20 hvpn serve --key F [opts]    run the exit node (needs root)\n\
          \x20 hvpn up --key F --peer H:P   connect a client (needs root)\n\
          \x20 hvpn down                    tear down routes/NAT from state files\n\
+         \x20 hvpn daemon [--socket S]     privileged control daemon (GUI/CLI driver)\n\
          \x20 hvpn status                  show tunnel state\n\
          \n\
          serve options: --listen A:P (default 0.0.0.0:51820), --tun-ip 10.66.0.1,\n\

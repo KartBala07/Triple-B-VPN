@@ -54,6 +54,45 @@ sudo bin/hvpnctl down
 
 `hvpnctl` re-execs itself under sudo, so you only authenticate once per command.
 
+## Desktop app (menu bar)
+
+A real SwiftUI app drives the tunnel through a privileged helper, so macOS only
+asks for a password once (at install time), never per connection.
+
+```bash
+cargo build --release
+./build-app.sh                        # builds build/HermesVPN.app (swiftc, no Xcode project)
+sudo /usr/bin/python3 install-app.py  # helper daemon + /Applications/HermesVPN.app
+open /Applications/HermesVPN.app
+```
+
+What's in the window:
+
+- **Connect / Disconnect** — one button, ↩ also works. Connecting to a loopback
+  peer with no exit node running starts the node automatically.
+- **Live stats** — received / sent bytes, packet count, uptime, session id.
+- **Peer + Mode** — `host:port`, full tunnel or split tunnel with a CIDR list.
+- **Exit node** — turns this Mac into an exit node and shows the address to give
+  other devices.
+- **Key** — PSK fingerprint, Copy (whole 64-char key to the clipboard), New.
+- **Recent tunnel log** — last lines of the active end's log.
+- Menu-bar item colours by state (green connected, blue exit node, grey idle)
+  with a right-click menu for connect / exit node / copy key / quit.
+
+### How the privilege split works
+
+```
+HermesVPN.app  ── unix socket (/var/run/hvpn/control.sock, 0660 root:staff,
+   (your user)     peer uid checked) ──▶  hvpn daemon (launchd, root)
+                                              ├── hvpn serve   (utun, pf NAT)
+                                              └── hvpn up      (utun, routes)
+```
+
+The app never runs as root and needs no entitlements; the daemon is the only
+privileged part, starts at boot, and launchd restarts it if it dies. The daemon
+also watches the uplink address/gateway and rebuilds the NAT + policy route when
+you change networks, which is what keeps the tunnel working while roaming.
+
 ## Commands
 
 ```
@@ -94,6 +133,8 @@ Last full run: **0 failures** (30 checks).
 ## Known limits
 
 - macOS only (utun / `ifconfig` / `route` / pf APIs).
+- The app is ad-hoc signed, not notarized: fine locally, but sign properly
+  before handing the .app to anyone else.
 - One session per peer IP; no multi-peer key database, no key rotation yet.
 - PSK-only: anyone with the key can join. Treat it like an SSH key.
 - Hand-rolled crypto, unaudited. It passes the RFC vectors and the wire is
