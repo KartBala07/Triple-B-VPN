@@ -1,0 +1,160 @@
+#!/bin/bash
+# hvpnctl — user-facing wrapper around the hvpn binary.
+# Everything that touches utun/routes/pf needs root, so the script re-execs
+# itself under sudo once and then never prompts again.
+set -uo pipefail
+
+PREFIX=$(cd "$(dirname "$0")/.." && pwd)
+RUN=/var/run/hvpn
+KEY=$RUN/psk
+ORIG=("$@")
+
+die() { echo "hvpnctl: $*" >&2; exit 1; }
+
+# Work from the source tree or from /usr/local/bin after install.sh.
+find_bin() {
+  local c
+  for c in "${HVPN_BIN:-}" "$PREFIX/target/release/hvpn" /usr/local/bin/hvpn /opt/homebrew/bin/hvpn; do
+    [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+BIN=$(find_bin) || die "hvpn binary not found (run: cargo build --release, or sudo ./install.sh)"
+
+# Re-run the whole original command line under sudo, once.
+need_root() {
+  if [ "$(id -u)" != 0 ]; then
+    echo "hvpnctl: root required for '$CMD' — re-running under sudo"
+    exec sudo -E "$0" "${ORIG[@]}"
+  fi
+}
+
+# physical uplink: first non-tunnel interface that carries a DHCP router
+phys_iface() {
+  local i
+  for i in $(ifconfig -l); do
+    case "$i" in utun*|lo*|gif*|stf*|awdl*|llw*|bridge*|ap*|anpi*) continue;; esac
+    if [ -n "$(ipconfig getoption "$i" router 2>/dev/null)" ]; then echo "$i"; return; fi
+  done
+  route -n get default 2>/dev/null | awk '/interface:/{print $2}'
+}
+
+lan_ip() {
+  local i=$1
+  ifconfig "$i" 2>/dev/null | awk '/inet /{for(k=1;k<=NF;k++) if($k=="inet"){print $(k+1); exit}}'
+}
+
+usage() {
+  cat <<'EOF'
+hvpnctl — HermesVPN control
+
+  hvpnctl key [--new]                show the pre-shared key (--new regenerates)
+  hvpnctl node [options]             make this Mac an exit node
+        --listen ADDR:PORT             (default 0.0.0.0:51820)
+        --no-internet                  tunnel only, no NAT/forwarding
+  hvpnctl up --peer HOST[:PORT] [options]   connect this Mac as a client
+        --full                         route everything through the tunnel
+        --route CIDR                   route one network (repeatable, split tunnel)
+  hvpnctl down                       stop the node/client on this Mac
+  hvpnctl status                     show what is running
+  hvpnctl selftest                   run crypto + protocol test vectors
+  hvpnctl doctor                     print the network facts hvpn needs
+
+The key is the shared secret: both ends must have the same 32-byte key.
+EOF
+}
+
+CMD=${1:-}
+[ -z "$CMD" ] && { usage; exit 2; }
+shift || true
+
+case "$CMD" in
+  key)
+    need_root "$@"
+    mkdir -p "$RUN"
+    if [ "${1:-}" = "--new" ]; then
+      "$BIN" keygen -o "$KEY" >/dev/null || die "keygen failed"
+      echo "new key written to $KEY"
+    fi
+    [ -f "$KEY" ] || "$BIN" keygen -o "$KEY" >/dev/null || die "keygen failed"
+    chmod 600 "$KEY"
+    echo "# copy this 32-byte hex key to the other end, e.g."
+    echo "#   ssh other-mac 'sudo mkdir -p $RUN && sudo tee $KEY >/dev/null' <<< \"\$(cat)\""
+    cat "$KEY"
+    ;;
+
+  node)
+    need_root "$@"
+    listen="0.0.0.0:51820"
+    internet=1
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --listen) listen=$2; shift 2;;
+        --no-internet) internet=0; shift;;
+        *) die "unknown node option: $1";;
+      esac
+    done
+    PHYS=$(phys_iface)
+    ARGS=(serve --key "$KEY" --listen "$listen" --tun-ip 10.66.0.1 --peer-nat 10.66.200.0 -v)
+    if [ "$internet" = 1 ]; then
+      ARGS+=(--nat "$PHYS" --egress "$PHYS")
+    fi
+    [ -f "$KEY" ] || die "no key yet — run: hvpnctl key"
+    echo "exit node on $listen | uplink $PHYS ($(lan_ip "$PHYS"))"
+    echo "clients connect with:  hvpnctl up --peer $(lan_ip "$PHYS"):${listen##*:} --full"
+    exec "$BIN" "${ARGS[@]}"
+    ;;
+
+  up)
+    need_root "$@"
+    peer=""
+    full=0
+    routes=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --peer) peer=$2; shift 2;;
+        --full) full=1; shift;;
+        --default) full=1; shift;;
+        --route) routes+=(--route "$2"); shift 2;;
+        *) die "unknown up option: $1";;
+      esac
+    done
+    [ -n "$peer" ] || die "--peer HOST[:PORT] is required"
+    case "$peer" in *:*) ;; *) peer="$peer:51820";; esac
+    [ -f "$KEY" ] || die "no key yet — run: hvpnctl key"
+    ARGS=(up --key "$KEY" --peer "$peer" --tun-ip 10.66.0.2 -v)
+    if [ "$full" = 1 ]; then ARGS+=(--default); fi
+    ARGS+=("${routes[@]}")
+    exec "$BIN" "${ARGS[@]}"
+    ;;
+
+  down)
+    need_root "$@"
+    "$BIN" down
+    ;;
+
+  status)
+    echo "key: $([ -f "$KEY" ] && echo "$KEY (present)" || echo "missing")"
+    "$BIN" status
+    echo "uplink: $(phys_iface) $(lan_ip "$(phys_iface)")"
+    echo "default route: $(route -n get default 2>/dev/null | awk '/interface:/{print $2}')"
+    pfctl -s nat 2>/dev/null | grep -q 10.66.200 && echo "pf: NAT for tunnel loaded" || echo "pf: no tunnel NAT"
+    ;;
+
+  selftest)
+    exec "$BIN" selftest
+    ;;
+
+  doctor)
+    PHYS_IF=$(phys_iface)
+    echo "binary:   $BIN"
+    echo "uplink:   $PHYS_IF $(lan_ip "$PHYS_IF")"
+    echo "default:  $(route -n get default 2>/dev/null | awk '/interface:/{print $2}')"
+    echo "forward:  $(sysctl -n net.inet.ip.forwarding)"
+    echo "pf:       $(pfctl -s info 2>/dev/null | awk '/Status:/{print $2}')"
+    echo "listening udp 51820: $(netstat -an -p udp 2>/dev/null | grep -c '\.51820 ')"
+    ;;
+
+  -h|--help|help) usage;;
+  *) die "unknown command '$CMD' (try: hvpnctl help)";;
+esac
