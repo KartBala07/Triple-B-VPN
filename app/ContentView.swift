@@ -31,8 +31,20 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("TRIPLE B VPN")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.6)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("v1.0.0").font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
+            }
             header
-            connectButton
+            if model.probed && !model.helperInstalled {
+                setupCard
+            } else {
+                connectButton
+            }
             if !model.lastError.isEmpty && !connected {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
@@ -91,6 +103,35 @@ struct ContentView: View {
         }
     }
 
+    private var setupCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver.fill").font(.system(size: 12))
+                Text("Enable the VPN helper").font(.system(size: 12, weight: .semibold))
+            }
+            Text("Creating a tunnel needs root once. This installs a small launchd "
+                 + "helper that runs it for you, so you never see another password prompt.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                model.installHelper()
+            } label: {
+                HStack(spacing: 6) {
+                    if model.busy { ProgressView().controlSize(.small) }
+                    Text(model.busy ? "Installing…" : "Enable VPN")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.busy)
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private var connectButton: some View {
         Button {
             model.connect()
@@ -105,8 +146,8 @@ struct ContentView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(connected ? .red.opacity(0.85) : .accentColor)
-        .disabled(model.busy || model.status.isEmpty)
-        .keyboardShortcut(.return, modifiers: [])
+        .disabled(model.busy || !model.helperInstalled)
+        .help(connected ? "Disconnect the tunnel" : "Connect through the exit node")
     }
 
     private var stats: some View {

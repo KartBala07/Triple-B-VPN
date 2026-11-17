@@ -1,143 +1,137 @@
-# HermesVPN (hvpn)
+# Triple B VPN
 
-A working point-to-point VPN for macOS, written from scratch in Rust with **zero
-dependencies** — no OpenSSL, no WireGuard, no crates. One binary does both ends.
+A working point-to-point VPN you can actually install: a menu-bar app for macOS
+on top of a from-scratch encrypted tunnel engine written in Rust with **zero
+dependencies** — no OpenSSL, no WireGuard, no crates.
+
+**[⬇︎ Download the DMG](https://github.com/KartBala07/Triple-B-VPN/releases/latest)**
+· drag to Applications · click *Enable VPN* once · connect.
+
+```
+Triple B VPN.app  (your user, no root, no entitlements)
+   │  unix socket · 0660 root:staff · peer uid checked
+   ▼
+hvpn daemon      (launchd, root, starts at boot, auto-restart)
+   ├── hvpn serve  → utun + pf NAT + policy route   (exit node)
+   └── hvpn up     → utun + routes                  (client)
+```
+
+## Install (macOS 13+)
+
+1. Download `TripleB-VPN-1.0.dmg` from [Releases](https://github.com/KartBala07/Triple-B-VPN/releases/latest).
+2. Open it, drag **Triple B VPN** into Applications.
+3. Launch it → **Enable VPN** → approve the one macOS password prompt. That
+   installs the privileged helper; you never see it again.
+4. Paste the peer address of the machine running the exit node → **Connect**.
+
+Gatekeeper: the app is signed ad-hoc (no paid Apple Developer ID), so the first
+launch needs right-click → **Open**, or:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Triple B VPN.app"
+```
+
+### Two Macs
+
+On the Mac that should be the exit node, open the app and flip **Exit node** on
+(it shows `10.0.0.x : 51820`). Press **Copy** next to PSK and send the 64-char
+key to the other Mac — both ends need the same key. On the second Mac paste the
+peer address, choose **Full tunnel** (everything) or **Split tunnel** with a CIDR
+list, then **Connect**.
+
+## What's in the app
+
+- **Connect / Disconnect** with live received / sent bytes, packet count, uptime
+  and session id.
+- **Peer + Mode** — `host:port`, full tunnel or split tunnel with your own CIDRs.
+- **Exit node** switch showing the address to give other devices.
+- **PSK** fingerprint, **Copy** (whole key to clipboard), **New**.
+- **Recent tunnel log** — the last lines from whichever end is active.
+- Menu-bar glyph that follows the system appearance (template image, so it's
+  legible in light *and* dark bars), left-click opens the panel, right-click
+  gives connect / exit node / copy key / quit.
+- The daemon watches the uplink address + gateway and rebuilds NAT and the
+  policy route when you change networks, so the tunnel survives roaming.
+
+## What the engine does
 
 - **Crypto**: ChaCha20-Poly1305 (RFC 8439) with SHA-256 / HMAC / HKDF (RFC 5869),
-  implemented here and checked against the official test vectors (`hvpn selftest`).
-  Keys are derived per session from a 256-bit pre-shared key plus two ephemeral
-  32-byte nonces, so the wire key never equals the PSK and every session is
-  keyed differently.
-- **Handshake**: PSK-authenticated request/response with a ±5 min timestamp window
-  and a challenge nonce, so a captured handshake cannot be replayed.
-- **Data path**: every packet is AEAD-sealed with a per-direction key and a
-  64-bit counter; a 128-packet sliding replay window drops duplicates.
-- **Tunnel**: real `utun` interface (root), 1400 MTU, split tunnel (`--route CIDR`)
-  or full tunnel (`--default`), with a guard that refuses to stack a full tunnel
-  on top of an existing one.
-- **Exit node**: decapsulates, 1:1 source-NATs each peer into `10.66.200.0/24`,
-  masquerades onto the uplink with pf, clamps MSS, and policy-routes forwarded
-  traffic (`route-to`) so it still works when the host's own default route is
-  another VPN.
+  implemented here and checked against the official test vectors
+  (`hvpn selftest`). Session keys come from the 256-bit PSK plus two ephemeral
+  32-byte nonces, so the wire key never equals the PSK.
+- **Handshake**: PSK-authenticated request/response with a ±5 min timestamp
+  window and a challenge nonce — a captured handshake cannot be replayed.
+- **Data path**: every packet AEAD-sealed with a per-direction key and a 64-bit
+  counter; a 128-packet sliding replay window drops duplicates.
+- **Tunnel**: real `utun` interface, 1400 MTU, split (`--route CIDR`) or full
+  (`--default`) tunnel, refusing to stack a full tunnel on an existing one.
+- **Exit node**: 1:1 source-NAT per peer into `10.66.200.0/24`, pf masquerade,
+  MSS clamp, and `route-to` policy routing so forwarding still works when the
+  host's own default route is another VPN.
 
-## Quick start
+## Command line
 
-Build once:
+The app is a front-end; the engine and a CLI ship with it.
 
 ```bash
-cd ~/HermesVPN && cargo build --release
-```
-
-### Same Mac (demo / smoke test)
-
-```bash
-sudo bash test/e2e.sh        # 30 checks: routing, crypto, NAT, teardown
-```
-
-### Real use — this Mac as the client, another machine as the exit node
-
-On the exit node (a Mac with a public or LAN address):
-
-```bash
-bin/hvpnctl key                    # writes /var/run/hvpn/psk, prints it
-bin/hvpnctl node                   # serves on 0.0.0.0:51820, NATs to the internet
-```
-
-Copy `/var/run/hvpn/psk` to this Mac, then:
-
-```bash
-bin/hvpnctl up --peer <node-ip> --full      # everything through the tunnel
-bin/hvpnctl up --peer <node-ip> --route 10.0.0.0/8   # split tunnel
-bin/hvpnctl status
-sudo bin/hvpnctl down
-```
-
-`hvpnctl` re-execs itself under sudo, so you only authenticate once per command.
-
-## Desktop app (menu bar)
-
-A real SwiftUI app drives the tunnel through a privileged helper, so macOS only
-asks for a password once (at install time), never per connection.
-
-```bash
-cargo build --release
-./build-app.sh                        # builds build/HermesVPN.app (swiftc, no Xcode project)
-sudo /usr/bin/python3 install-app.py  # helper daemon + /Applications/HermesVPN.app
-open /Applications/HermesVPN.app
-```
-
-What's in the window:
-
-- **Connect / Disconnect** — one button, ↩ also works. Connecting to a loopback
-  peer with no exit node running starts the node automatically.
-- **Live stats** — received / sent bytes, packet count, uptime, session id.
-- **Peer + Mode** — `host:port`, full tunnel or split tunnel with a CIDR list.
-- **Exit node** — turns this Mac into an exit node and shows the address to give
-  other devices.
-- **Key** — PSK fingerprint, Copy (whole 64-char key to the clipboard), New.
-- **Recent tunnel log** — last lines of the active end's log.
-- Menu-bar item colours by state (green connected, blue exit node, grey idle)
-  with a right-click menu for connect / exit node / copy key / quit.
-
-### How the privilege split works
-
-```
-HermesVPN.app  ── unix socket (/var/run/hvpn/control.sock, 0660 root:staff,
-   (your user)     peer uid checked) ──▶  hvpn daemon (launchd, root)
-                                              ├── hvpn serve   (utun, pf NAT)
-                                              └── hvpn up      (utun, routes)
-```
-
-The app never runs as root and needs no entitlements; the daemon is the only
-privileged part, starts at boot, and launchd restarts it if it dies. The daemon
-also watches the uplink address/gateway and rebuilds the NAT + policy route when
-you change networks, which is what keeps the tunnel working while roaming.
-
-## Commands
-
-```
-hvpnctl key [--new]                          show / regenerate the shared key
-hvpnctl node [--listen ADDR:PORT] [--no-internet]   run the exit node
-hvpnctl up --peer HOST[:PORT] [--full|--route CIDR]...   connect as a client
+hvpnctl key [--new]                               show / regenerate the shared key
+hvpnctl node [--listen ADDR:PORT] [--no-internet] run the exit node
+hvpnctl up --peer HOST[:PORT] [--full|--route CIDR]...
 hvpnctl down | status | selftest | doctor
-```
 
-Raw binary, if you prefer:
-
-```
-hvpn keygen [-o FILE]                      256-bit key
-hvpn selftest                              crypto + protocol vectors
-hvpn serve --key F [--listen A:P] [--tun-ip 10.66.0.1] [--nat auto|IF]...
-           [--egress auto|IF[@GW]] [--peer-nat 10.66.200.0] [--mtu 1400] [-v]
-hvpn up    --key F --peer H:P [--tun-ip 10.66.0.2] [--default] [--route CIDR]... [-v]
-hvpn down | status
+hvpn daemon [--socket PATH]                       privileged helper (launchd runs this)
+hvpn selftest                                     crypto + protocol vectors
 ```
 
 State lives in `/var/run/hvpn/` (`psk`, `client.state`, `server.state`, logs).
 
-## What the end-to-end test actually proves
+## Build from source
 
-`test/e2e.sh` (run as root, restores all host networking on exit):
+```bash
+cargo build --release
+./build-app.sh                        # Triple B VPN.app (swiftc, no Xcode project)
+./dist-dmg.sh                         # dist/TripleB-VPN-<version>.dmg
+sudo /usr/bin/python3 install-app.py  # helper + /Applications (dev convenience)
+```
+
+`tools/make-icon.swift` draws the icon with CoreGraphics; `tools/make-icns.sh`
+turns it into `AppIcon.icns`. No design files, no external assets.
+
+## Verified, not just compiled
+
+`test/e2e.sh` runs as root and restores all host networking on exit:
 
 | Check | What it shows |
 |---|---|
-| handshake / session id / wrong-PSK rejected | only the holder of the key gets a session |
-| ICMP, DNS, HTTP, HTTPS, 500 KB bulk TCP to `1.1.1.1` | real internet traffic crosses the tunnel |
-| `pf -s state` / NAT + `route-to` rules | the exit node rewrites and forwards, not the host |
-| tcpdump of `udp/51820` | 32 packets on the wire, no plaintext HTTP, no tunnel IPs |
-| `kill -STOP` the exit node | traffic dies, and resumes when it resumes — causal, not cached |
-| SIGINT teardown | routes, pf NAT, and `ip.forwarding` are all restored |
+| handshake / wrong-PSK rejected | only the key holder gets a session |
+| ICMP, DNS, HTTP, HTTPS, 500 KB bulk TCP | real internet traffic crosses the tunnel |
+| `pf -s nat`, `route-to`, `max-mss` | the exit node rewrites and forwards |
+| tcpdump on `udp/51820` | no plaintext, no tunnel IPs in outer headers |
+| `kill -STOP` the exit node | traffic dies, resumes on `CONT` — causal |
+| SIGINT teardown | routes, pf NAT and `ip.forwarding` all restored |
 
-Last full run: **0 failures** (30 checks).
+Last full run: **30 checks, 0 failures**. The app flow was verified the same way:
+UI click → node + client up, 5 MB bulk transfer, full-tunnel routing with
+internet intact, clean teardown.
+
+## Windows
+
+**Not shipped yet.** The protocol, crypto and framing are platform-neutral, but
+the tunnel layer is macOS-specific (`utun`, `ifconfig`, `route`, pf), and a
+Windows client needs Wintun (`wintun.dll`) plus its own service and tray shell.
+I have no Windows machine here to build or test that, and shipping an untested
+network driver would be worse than shipping nothing. The realistic path is a
+`cfg(target_os = "windows")` backend over Wintun plus a WinUI/Win32 tray app,
+built and tested on a Windows box.
 
 ## Known limits
 
-- macOS only (utun / `ifconfig` / `route` / pf APIs).
-- The app is ad-hoc signed, not notarized: fine locally, but sign properly
-  before handing the .app to anyone else.
-- One session per peer IP; no multi-peer key database, no key rotation yet.
+- macOS only today (see Windows above).
+- One session per peer IP; no multi-peer key database, no key rotation.
 - PSK-only: anyone with the key can join. Treat it like an SSH key.
 - Hand-rolled crypto, unaudited. It passes the RFC vectors and the wire is
-  demonstrably encrypted, but for hostile-network threat models use WireGuard.
-- A macOS full-tunnel client cannot be stacked under an already-active VPN
-  (hvpn refuses rather than loop); quit the other VPN first.
+  demonstrably encrypted, but if you need an audited stack use WireGuard.
+- A full-tunnel client can't be stacked under an already-active VPN — the client
+  refuses rather than loop; quit the other VPN first.
+- Ad-hoc signed, not notarized: fine for personal use, but a public release
+  should get a Developer ID and notarization.

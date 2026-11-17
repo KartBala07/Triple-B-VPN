@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.hermes.vpn</string>
+	<string>com.tripleb.vpn</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/local/bin/hvpn</string>
@@ -16,9 +16,9 @@
 	<key>ProcessType</key>
 	<string>Interactive</string>
 	<key>StandardOutPath</key>
-	<string>/var/log/hermesvpn-daemon.log</string>
+	<string>/var/log/tripleb-vpn.log</string>
 	<key>StandardErrorPath</key>
-	<string>/var/log/hermesvpn-daemon.log</string>
+	<string>/var/log/tripleb-vpn.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>

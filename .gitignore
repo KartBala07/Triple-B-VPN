@@ -1,5 +1,6 @@
 target/
 build/
+dist/
 *.pcap
 test/*.log
 __pycache__/

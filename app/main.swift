@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "HermesVPN"
+        window.title = "Triple B VPN"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.contentView = hosting
@@ -55,22 +55,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func statusClicked() {
-        let event = NSApp.currentEvent
-        if event?.type == .rightMouseUp {
-            showMenu()
+        guard let button = statusItem.button else { return }
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            let menu = buildMenu()
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
         } else {
             toggleWindow()
         }
     }
 
-    private func showMenu() {
+    private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let state = model.clientRunning ? "Disconnect" : "Connect"
         menu.addItem(NSMenuItem(title: state, action: #selector(menuToggleConnect), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: model.nodeRunning ? "Stop exit node" : "Start exit node",
                                 action: #selector(menuToggleNode), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Show HermesVPN", action: #selector(showWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Open Triple B VPN", action: #selector(showWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Copy pre-shared key", action: #selector(menuCopyKey), keyEquivalent: ""))
         menu.addItem(.separator())
         let stats = NSMenuItem(title: "\(model.headline) · ↓\(model.rxText) ↑\(model.txText)", action: nil, keyEquivalent: "")
@@ -78,8 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(stats)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items { item.target = self }
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
+        return menu
     }
 
     @objc private func menuToggleConnect() { model.connect(); statusItem.menu = nil }
@@ -102,38 +102,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func glyph(named: String) -> NSImage? {
         let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        let img = NSImage(systemSymbolName: named, accessibilityDescription: "HermesVPN")?
+        let img = NSImage(systemSymbolName: named, accessibilityDescription: "Triple B VPN")?
             .withSymbolConfiguration(cfg)
-        img?.isTemplate = false
+        img?.isTemplate = true      // template = correct colour in light and dark bars
         return img
-    }
-
-    private func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {
-        let out = NSImage(size: image.size)
-        out.lockFocus()
-        let rect = NSRect(origin: .zero, size: image.size)
-        image.draw(in: rect)
-        color.set()
-        rect.fill(using: .sourceAtop)
-        out.unlockFocus()
-        out.isTemplate = false
-        return out
     }
 
     private func refreshGlyph() {
         let name: String
-        let color: NSColor
         if model.clientRunning {
-            name = "lock.shield.fill"; color = .systemGreen
+            name = "lock.shield.fill"
         } else if model.nodeRunning {
-            name = "lock.shield.fill"; color = .systemBlue
+            name = "lock.shield"
+        } else if model.probed && !model.helperInstalled {
+            name = "shield.slash"
         } else {
-            name = "shield.slash"; color = .secondaryLabelColor
+            name = "shield"
         }
-        if let img = glyph(named: name) {
-            statusItem.button?.image = tinted(img, color)
-        }
-        statusItem.button?.toolTip = "HermesVPN — \(model.headline)"
+        statusItem.button?.image = glyph(named: name)
+        statusItem.button?.toolTip = "Triple B VPN — \(model.headline)"
     }
 }
 

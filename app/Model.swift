@@ -69,6 +69,7 @@ final class VPNModel: ObservableObject {
     @Published var logLines: [String] = []
     @Published var busy = false
     @Published var message: String = ""
+    @Published var probed = false
 
     // user settings
     @Published var peer: String = "127.0.0.1:51820"
@@ -79,6 +80,7 @@ final class VPNModel: ObservableObject {
     private var tick = 0
 
     var daemonUp: Bool { status["node"] != nil || status["client"] != nil }
+    var helperInstalled: Bool { probed && status["error"] == nil }
     var clientRunning: Bool { status["client"] == "running" }
     var nodeRunning: Bool { status["node"] == "running" }
 
@@ -96,7 +98,7 @@ final class VPNModel: ObservableObject {
     }
 
     var headline: String {
-        if status.isEmpty { return "Helper not running" }
+        if !helperInstalled { return "One-time setup" }
         if clientRunning { return "Connected" }
         if nodeRunning { return "Exit node running" }
         return "Disconnected"
@@ -114,7 +116,7 @@ final class VPNModel: ObservableObject {
             let port = (status["node_listen"] ?? "").split(separator: ":").last.map(String.init) ?? "51820"
             return "serving on \(ip):\(port)"
         }
-        if status.isEmpty { return "Install the helper daemon to begin" }
+        if !helperInstalled { return "Enable the VPN helper to create tunnels" }
         return "Tap Connect to route traffic through the tunnel"
     }
 
@@ -131,8 +133,8 @@ final class VPNModel: ObservableObject {
     }
 
     func refresh() {
-        let text = Control.send("STATUS")
-        status = Control.parse(text)
+        status = Control.parse(Control.send("STATUS"))
+        probed = true
     }
 
     func loadLog() {
@@ -148,6 +150,11 @@ final class VPNModel: ObservableObject {
     }
 
     func connect() {
+        guard !busy else { return }
+        guard helperInstalled else {
+            message = "enable the VPN helper first"
+            return
+        }
         guard !clientRunning else { disconnect(); return }
         busy = true
         message = ""
@@ -171,6 +178,7 @@ final class VPNModel: ObservableObject {
     }
 
     func disconnect() {
+        guard !busy else { return }
         busy = true
         _ = Control.send("CLIENT STOP", timeout: 15)
         message = "disconnected"
@@ -190,11 +198,50 @@ final class VPNModel: ObservableObject {
             if let e = parsed["err"] {
                 message = e
             } else {
-                message = "exit node up · \(parsed["url"] ?? "")"
+                message = "exit node up · share \(parsed["url"] ?? "")"
             }
         }
         busy = false
         refresh()
+    }
+
+    /// Install the privileged helper from the payload inside the app bundle.
+    /// One admin prompt; afterwards the app never needs a password again.
+    func installHelper() {
+        guard let helper = Bundle.main.url(forResource: "install-helper", withExtension: "sh") else {
+            message = "helper payload missing from the bundle"
+            return
+        }
+        busy = true
+        message = "installing the helper — approve the macOS password prompt"
+        let path = helper.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let script = "do shell script \"/bin/bash '\(path)'\" with administrator privileges"
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            proc.arguments = ["-e", script]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            var rc: Int32 = -1
+            var out = ""
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                rc = proc.terminationStatus
+                out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            } catch {
+                out = error.localizedDescription
+            }
+            let note = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async {
+                self.busy = false
+                self.message = (rc == 0)
+                    ? "helper installed — ready to connect"
+                    : (note.isEmpty ? "install cancelled" : note)
+                self.refresh()
+            }
+        }
     }
 
     func fullKey() -> String { Control.parse(Control.send("KEY"))["key"] ?? "" }
@@ -204,7 +251,7 @@ final class VPNModel: ObservableObject {
         guard !k.isEmpty else { message = "no key"; return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(k, forType: .string)
-        message = "64-char key copied — paste it on the other Mac"
+        message = "64-char key copied — paste it into Triple B VPN on the other Mac"
     }
 
     func regenerateKey() {

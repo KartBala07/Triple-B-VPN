@@ -10,14 +10,15 @@ import sys
 import time
 
 PREFIX = os.path.dirname(os.path.abspath(__file__))
-APP_SRC = os.path.join(PREFIX, "build", "HermesVPN.app")
+APP_SRC = os.path.join(PREFIX, "build", "Triple B VPN.app")
 BIN_SRC = os.path.join(PREFIX, "target", "release", "hvpn")
 CTL_SRC = os.path.join(PREFIX, "bin", "hvpnctl")
-PLIST_SRC = os.path.join(PREFIX, "deploy", "com.hermes.vpn.plist")
-LABEL = "com.hermes.vpn"
+PLIST_SRC = os.path.join(PREFIX, "deploy", "com.tripleb.vpn.plist")
+LABEL = "com.tripleb.vpn"
+LEGACY_LABEL = "com.hermes.vpn"
 PLIST_DST = f"/Library/LaunchDaemons/{LABEL}.plist"
 SOCK = "/var/run/hvpn/control.sock"
-DAEMON_LOG = "/var/log/hermesvpn-daemon.log"
+DAEMON_LOG = "/var/log/tripleb-vpn.log"
 
 
 def run(cmd, check=False):
@@ -66,6 +67,10 @@ def main():
         ctl("QUIT")
         time.sleep(1)
     run(["launchctl", "bootout", f"system/{LABEL}"])
+    run(["launchctl", "bootout", f"system/{LEGACY_LABEL}"])
+    for legacy in ("/Library/LaunchDaemons/com.hermes.vpn.plist",):
+        if os.path.exists(legacy):
+            os.unlink(legacy)
     time.sleep(0.5)
     run(["/usr/local/bin/hvpn", "down"])
     run(["pfctl", "-f", "/etc/pf.conf"])
@@ -97,7 +102,7 @@ def main():
             pass
 
     print("== 4/4 app bundle")
-    dst_app = "/Applications/HermesVPN.app"
+    dst_app = "/Applications/Triple B VPN.app"
     if os.path.isdir(dst_app):
         shutil.rmtree(dst_app)
     shutil.copytree(APP_SRC, dst_app, symlinks=True)
@@ -109,7 +114,7 @@ def main():
     print("   " + dst_app)
 
     print()
-    print("installed. open /Applications/HermesVPN.app")
+    print("installed. open \"/Applications/Triple B VPN.app\"")
     return 0
 
 
