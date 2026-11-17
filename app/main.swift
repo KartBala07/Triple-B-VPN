@@ -26,19 +26,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     private func buildWindow() {
-        // A hosting *controller* with preferredContentSize keeps the window
-        // exactly as tall as the SwiftUI content, so nothing is ever clipped as
-        // the panel grows an error banner or shrinks without the routes row.
-        let controller = NSHostingController(rootView: ContentView(model: model))
-        controller.sizingOptions = [.preferredContentSize]
-        window = NSWindow(contentViewController: controller)
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        // Fixed content height, measured from the layout: preferredContentSize
+        // left the window un-ordered (zero-size frame), and a flexible
+        // ScrollView silently absorbed any shortfall and clipped the log.
+        let hosting = NSHostingView(rootView: ContentView(model: model))
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 372, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        hosting.frame = NSRect(x: 0, y: 0, width: 372, height: 640)
+        window.contentView = hosting
+        window.setContentSize(NSSize(width: 372, height: 640))   // authoritative
         window.titlebarAppearsTransparent = true
         window.title = "Triple B VPN"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
-        window.center()
+        // Never depend on a live display: with the lid closed NSScreen.screens
+        // can be empty and center() would leave the panel nowhere.
+        if let vf = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+            window.setFrameOrigin(NSPoint(x: vf.midX - window.frame.width / 2,
+                                          y: vf.midY - window.frame.height / 2))
+        } else {
+            window.setFrameOrigin(NSPoint(x: 240, y: 240))
+        }
         // A menu-bar utility must be reachable from every Space, including on
         // top of full-screen apps, otherwise clicking the status item looks
         // broken because the panel opens somewhere you cannot see.
