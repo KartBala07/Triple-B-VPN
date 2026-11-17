@@ -150,19 +150,35 @@ Last full run: **30 checks, 0 failures**. The app flow was verified the same way
 UI click → node + client up, 5 MB bulk transfer, full-tunnel routing with
 internet intact, clean teardown.
 
-## Windows
+## Windows (alpha)
 
-**Not shipped yet.** The protocol, crypto and framing are platform-neutral, but
-the tunnel layer is macOS-specific (`utun`, `ifconfig`, `route`, pf), and a
-Windows client needs Wintun (`wintun.dll`) plus its own service and tray shell.
-I have no Windows machine here to build or test that, and shipping an untested
-network driver would be worse than shipping nothing. The realistic path is a
-`cfg(target_os = "windows")` backend over Wintun plus a WinUI/Win32 tray app,
-built and tested on a Windows box.
+**[⬇︎ TripleB-VPN-windows-alpha.zip](https://github.com/KartBala07/Triple-B-VPN/releases)** —
+`hvpn.exe` (Wintun client) + `wintun.dll` + a small WinForms launcher +
+`README.txt`.
+
+- **Client only.** It creates a Wintun adapter (`TripleBVPN`, 10.66.0.2/24),
+  handshakes with an exit node, and routes either everything (`--default`) or
+  the CIDRs you list. Same engine, same PSK, same protocol as macOS.
+- **Windows cannot be an exit node yet** — that needs NAT (WinNAT/ICS) and is a
+  separate piece of work.
+- Routes are added with `netsh`, the peer's `/32` is pinned to your physical
+  gateway so the tunnel cannot loop, and `hvpn down` / Ctrl-C removes every
+  route it added.
+- Build it yourself with `./build-windows.sh` (needs
+  [llvm-mingw](https://github.com/mstorsjo/llvm-mingw/releases); the script
+  pins `x86_64-pc-windows-gnullvm`).
+
+**This build has not been run on Windows hardware.** There is no Windows machine
+in this project's environment, so it is compiled and packaged but unverified:
+the PE is valid (`PE32+ x86-64`, console), the code is the same engine the macOS
+tests exercise, and the Wintun FFI follows the v0.14 header — but the first real
+run is yours. `hvpn selftest` (no admin needed) verifies the crypto in one
+command, and the launcher shows `hvpn.exe`'s live log so failures are visible.
+Shout if anything breaks and it gets fixed against your report.
 
 ## Known limits
 
-- macOS only today (see Windows above).
+- macOS is the tested platform; the Windows client is an unverified alpha.
 - One session per peer IP; no multi-peer key database, no key rotation.
 - PSK-only: anyone with the key can join. Treat it like an SSH key.
 - Hand-rolled crypto, unaudited. It passes the RFC vectors and the wire is

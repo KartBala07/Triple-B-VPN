@@ -8,16 +8,27 @@
 //!   hvpn down | status
 
 mod crypto;
-mod daemon;
-mod netcfg;
 mod proto;
+
+// macOS/unix tunnel stack: utun device, route(8)/ifconfig/pf, launchd helper.
+#[cfg(unix)]
+mod daemon;
+#[cfg(unix)]
+mod netcfg;
+#[cfg(unix)]
 mod tun;
+#[cfg(unix)]
 mod tunnel;
+
+// Windows tunnel stack: Wintun adapter + netsh route management.
+#[cfg(windows)]
+mod win;
 
 use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use proto::{parse_ipv4, show_ipv4};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -45,15 +56,18 @@ pub fn logw(msg: &str) {
     let _ = std::io::stdout().flush();
 }
 
+#[cfg(unix)]
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
 
+#[cfg(unix)]
 fn has(args: &[String], name: &str) -> bool {
     args.iter().any(|a| a == name)
 }
 
 /// Collect every value given for a repeatable flag (e.g. --route a --route b).
+#[cfg(unix)]
 fn flags(args: &[String], name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -68,6 +82,7 @@ fn flags(args: &[String], name: &str) -> Vec<String> {
     out
 }
 
+#[cfg(unix)]
 fn need_root(what: &str) {
     if !netcfg::run_as_root_args_check() {
         eprintln!("hvpn: {} needs root (utun + routes).", what);
@@ -76,6 +91,7 @@ fn need_root(what: &str) {
     }
 }
 
+#[cfg(unix)]
 fn load_key(path: &str) -> [u8; 32] {
     let raw = match std::fs::read(path) {
         Ok(v) => v,
@@ -101,6 +117,13 @@ fn load_key(path: &str) -> [u8; 32] {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        win::main_win();
+        return;
+    }
+    #[cfg(unix)]
+    {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         usage();
@@ -134,8 +157,10 @@ fn main() {
             exit(2);
         }
     }
+    }
 }
 
+#[cfg(unix)]
 fn usage() {
     println!(
         "HermesVPN 1.0 — encrypted point-to-point VPN (macOS)\n\
@@ -160,6 +185,7 @@ fn usage() {
 
 // ------------------------------------------------------------------ keygen
 
+#[cfg(unix)]
 fn keygen(args: &[String]) {
     use std::io::Read;
     let mut k = [0u8; 32];
@@ -182,6 +208,7 @@ fn keygen(args: &[String]) {
 
 // ------------------------------------------------------------------ serve / up
 
+#[cfg(unix)]
 fn common_cfg(args: &[String]) -> tunnel::CommonCfg {
     let key_path = match flag(args, "--key") {
         Some(k) => k,
@@ -210,6 +237,7 @@ fn common_cfg(args: &[String]) -> tunnel::CommonCfg {
     tunnel::CommonCfg { key: load_key(&key_path), tun_ip, subnet, mtu }
 }
 
+#[cfg(unix)]
 fn serve(args: &[String]) {
     need_root("serve");
     let mut cfg = common_cfg(args);
@@ -273,6 +301,7 @@ fn serve(args: &[String]) {
     }
 }
 
+#[cfg(unix)]
 fn up(args: &[String]) {
     need_root("up");
     let peer_s = match flag(args, "--peer") {
@@ -301,6 +330,7 @@ fn up(args: &[String]) {
 
 // ------------------------------------------------------------------ down / status
 
+#[cfg(unix)]
 fn down() {
     let mut did = false;
 
@@ -354,6 +384,7 @@ fn down() {
     }
 }
 
+#[cfg(unix)]
 fn status() {
     for kind in ["server", "client"] {
         let kv = netcfg::load_state(kind);
@@ -548,7 +579,7 @@ fn selftest() -> usize {
     };
     assertc!("ipv4 dst parse", proto::ipv4_dst(&pkt) == Some([1, 1, 1, 1]));
     assertc!("ipv4 src parse", proto::ipv4_src(&pkt) == Some([10, 66, 0, 2]));
-    assertc!("ipv4 string round-trip", show_ipv4(&[10, 66, 0, 2]) == "10.66.0.2");
+    assertc!("ipv4 string round-trip", proto::show_ipv4(&[10, 66, 0, 2]) == "10.66.0.2");
 
     // ---- source NAT keeps IPv4 + UDP checksums valid
     let mut p = vec![0u8; 20 + 8 + 12];
