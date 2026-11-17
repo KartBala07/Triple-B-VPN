@@ -26,20 +26,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     private func buildWindow() {
-        let hosting = NSHostingView(rootView: ContentView(model: model))
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 372, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        // A hosting *controller* with preferredContentSize keeps the window
+        // exactly as tall as the SwiftUI content, so nothing is ever clipped as
+        // the panel grows an error banner or shrinks without the routes row.
+        let controller = NSHostingController(rootView: ContentView(model: model))
+        controller.sizingOptions = [.preferredContentSize]
+        window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.titlebarAppearsTransparent = true
         window.title = "Triple B VPN"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.contentView = hosting
         window.isReleasedWhenClosed = false
         window.center()
+        // A menu-bar utility must be reachable from every Space, including on
+        // top of full-screen apps, otherwise clicking the status item looks
+        // broken because the panel opens somewhere you cannot see.
         window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     }
 
     private func buildStatusItem() {
@@ -88,7 +92,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc func showWindow() {
-        window.makeKeyAndOrderFront(nil)
+        if !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
+            if let vf = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+                var f = window.frame
+                f.origin = NSPoint(x: vf.midX - f.width / 2, y: vf.midY - f.height / 2)
+                window.setFrame(f, display: true)
+            }
+        }
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -124,10 +135,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// NSApplication.delegate is a weak reference: this must stay alive at file
+// scope or ARC frees it and applicationDidFinishLaunching never fires (the app
+// then runs with no window and no menu-bar item).
+var appDelegate: AppDelegate?
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
-    let delegate = AppDelegate()
-    app.delegate = delegate
+    appDelegate = AppDelegate()
+    app.delegate = appDelegate
     app.setActivationPolicy(.accessory)
     app.run()
 }

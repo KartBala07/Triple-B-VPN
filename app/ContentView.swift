@@ -81,7 +81,7 @@ struct ContentView: View {
             }
         }
         .padding(14)
-        .frame(width: 372)
+        .frame(width: 372, height: 604, alignment: .top)
         .background(.regularMaterial)
     }
 
@@ -241,7 +241,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .frame(height: 62)
+            .frame(height: 74)
         }
         .padding(8)
         .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
