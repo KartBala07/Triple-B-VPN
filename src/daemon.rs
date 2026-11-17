@@ -104,10 +104,29 @@ struct Daemon {
     /// What the user asked the client to do, so it can be re-established after
     /// a network change: (peer, full_tunnel, routes).
     client_spec: Option<(String, bool, Vec<String>)>,
+    /// Where forwarded traffic leaves: "direct" (this Mac's uplink) or "xvpn"
+    /// (chain into X-VPN's tunnel so the far end is X-VPN's server).
+    chain: String,
     /// (iface, ip, router) of the physical uplink; changes mean we must rebuild
     /// the NAT/policy-route ruleset with the new gateway.
     net_fp: String,
     last_net_check: Instant,
+}
+
+/// X-VPN publishes a point-to-point utun carrying 172.21.0.0/16.
+fn xvpn_tun() -> Option<String> {
+    let (_, out, _) = netcfg::run(&["ifconfig", "-l"]).ok()?;
+    for name in out.split_whitespace() {
+        if !name.starts_with("utun") {
+            continue;
+        }
+        if let Some(ip) = netcfg::iface_ipv4(name) {
+            if ip.starts_with("172.21.") {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn net_fingerprint() -> String {
@@ -237,6 +256,13 @@ impl Daemon {
         }
         self.ensure_key().map_err(|e| e.to_string())?;
         let phys = netcfg::physical_iface().unwrap_or_else(|| "en0".to_string());
+        let uplink = match self.chain.as_str() {
+            "xvpn" => match xvpn_tun() {
+                Some(t) => t,
+                None => return Err("X-VPN is not connected on this Mac".into()),
+            },
+            _ => phys.clone(),
+        };
         let args: Vec<String> = vec![
             "serve".into(),
             "--key".into(),
@@ -248,9 +274,9 @@ impl Daemon {
             "--peer-nat".into(),
             "10.66.200.0".into(),
             "--nat".into(),
-            phys.clone(),
+            uplink.clone(),
             "--egress".into(),
-            phys.clone(),
+            uplink.clone(),
             "-v".into(),
         ];
         let log = format!("{}/node.log", self.rundir);
@@ -267,7 +293,10 @@ impl Daemon {
             j.tun = tun.clone();
         }
         let _ = verbose();
-        logw(&format!("daemon: exit node started pid {} on {}", pid, listen));
+        logw(&format!(
+            "daemon: exit node started pid {} on {} (exit via {} / {})",
+            pid, listen, self.chain, uplink
+        ));
         Ok(format!("pid={}\ntun={}\nurl={}:{}", pid, tun, ip, port))
     }
 
@@ -485,6 +514,11 @@ impl Daemon {
                 }
             }
         }
+        let xv = xvpn_tun().unwrap_or_default();
+        o.push_str(&format!("chain={}\n", self.chain));
+        o.push_str(&format!("chain_iface={}\n", if self.chain == "xvpn" { xv.clone() } else { String::new() }));
+        o.push_str(&format!("xvpn_available={}\n", !xv.is_empty()));
+        o.push_str(&format!("xvpn_iface={}\n", xv));
         let phys = netcfg::physical_iface().unwrap_or_default();
         o.push_str(&format!("uplink={}\n", phys));
         o.push_str(&format!(
@@ -558,6 +592,24 @@ fn handle(d: &mut Daemon, req: &str) -> String {
             Some("STOP") => format!("{}\n", d.client_stop()),
             _ => "err=usage: CLIENT START peer full|split [cidrs]\n".to_string(),
         },
+        "CHAIN" => {
+            let mode = parts.get(1).copied().unwrap_or("direct").to_lowercase();
+            if mode != "direct" && mode != "xvpn" {
+                return "err=usage: CHAIN direct|xvpn\n".to_string();
+            }
+            let was_running = d.node.is_some();
+            d.chain = mode.clone();
+            let mut note = String::new();
+            if was_running {
+                d.node_stop();
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                match d.node_start("0.0.0.0:51820") {
+                    Ok(_) => note = "restarted=1\n".to_string(),
+                    Err(e) => note = format!("restarted=0\nerr={}\n", e),
+                }
+            }
+            format!("chain={}\n{}", mode, note)
+        }
         "STOPALL" => {
             let c = d.client_stop();
             let n = d.node_stop();
@@ -601,6 +653,7 @@ pub fn run_daemon(socket_path: &str) -> std::io::Result<()> {
         rundir: rundir.clone(),
         key: format!("{}/psk", rundir),
         client_spec: None,
+        chain: "direct".to_string(),
         net_fp: net_fingerprint(),
         last_net_check: Instant::now(),
     };

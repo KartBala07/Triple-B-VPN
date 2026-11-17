@@ -10,7 +10,7 @@ DST="/Applications/Triple B VPN.app"
 
 rm -rf "/Applications/HermesVPN.app" "$DST"
 cp -R "$SRC" "$DST"
-chown -R root:wheel "$DST"
+chown -R "$(stat -f%Su /dev/console)" "$DST"
 xattr -dr com.apple.quarantine "$DST" 2>/dev/null || true
-echo "installed: $DST"
+echo "installed: $DST (owner $(stat -f%Su /dev/console))"
 /usr/libexec/PlistBuddy -c "Print :CFBundleName" -c "Print :CFBundleIdentifier" "$DST/Contents/Info.plist"

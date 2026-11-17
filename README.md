@@ -44,7 +44,8 @@ list, then **Connect**.
 - **Connect / Disconnect** with live received / sent bytes, packet count, uptime
   and session id.
 - **Peer + Mode** — `host:port`, full tunnel or split tunnel with your own CIDRs.
-- **Exit node** switch showing the address to give other devices.
+- **Exit node** switch showing the address to give other devices, plus an
+  **Exit via** control: *This Mac* (direct) or *X-VPN* (chain into X-VPN's tunnel).
 - **PSK** fingerprint, **Copy** (whole key to clipboard), **New**.
 - **Recent tunnel log** — the last lines from whichever end is active.
 - Menu-bar glyph that follows the system appearance (template image, so it's
@@ -52,6 +53,41 @@ list, then **Connect**.
   gives connect / exit node / copy key / quit.
 - The daemon watches the uplink address + gateway and rebuilds NAT and the
   policy route when you change networks, so the tunnel survives roaming.
+
+## Routing through X-VPN's servers
+
+Triple B VPN can hand its forwarded traffic to another VPN that is already
+connected on the same Mac — in practice X-VPN. The exit node then forwards
+through X-VPN's tunnel, so traffic that enters Triple B leaves from **X-VPN's
+server**, not from this Mac's own uplink.
+
+Pick **Exit via → X-VPN** in the app (or `hvpnctl ... --egress utun4`), then
+connect. The daemon finds X-VPN's tunnel automatically (the point-to-point
+`utun` carrying `172.21.0.0/16`), MASQs our peer pool onto it and policy-routes
+forwarded packets with `route-to (utunN <interface address>)`.
+
+Verified on this Mac with X-VPN connected:
+
+```
+route 1.1.1.1 -> utun6                     # our tunnel
+ping 1.1.1.1            OK
+https://1.1.1.1        200
+ip=207.180.52.57  loc=US                   # X-VPN's server, not the ISP
+tcpdump -i utun4  172.21.0.1 > 1.1.1.1     # our forwarded packet inside X-VPN
+kill -STOP <exit node> -> traffic dies     # causal, not cached
+```
+
+What this is and is not:
+
+- It **is** a real double-VPN chain: Triple B (ChaCha20-Poly1305, own PSK) →
+  X-VPN (their protocol, their servers). Useful when you want your traffic to
+  leave from X-VPN's exit while still using Triple B's app/tunnel on the LAN.
+- It is **not** Triple B speaking X-VPN's protocol or using their credentials.
+  Their client must be installed, logged in and connected; their service, their
+  terms. Traffic still exits through their servers exactly as their own client
+  would send it.
+- If X-VPN is not connected, the app shows *X-VPN (not running)* and the chain
+  command refuses instead of silently falling back to the direct uplink.
 
 ## What the engine does
 

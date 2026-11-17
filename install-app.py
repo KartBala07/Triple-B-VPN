@@ -106,10 +106,18 @@ def main():
     if os.path.isdir(dst_app):
         shutil.rmtree(dst_app)
     shutil.copytree(APP_SRC, dst_app, symlinks=True)
+    # Keep the console user's ownership: a root-owned .app in /Applications can
+    # launch without ever creating its window (nothing Finder would produce).
+    try:
+        import pwd
+        console_uid = os.stat("/dev/console").st_uid
+        console_gid = pwd.getpwuid(console_uid).pw_gid
+    except Exception:
+        console_uid, console_gid = 0, 0
     for root, dirs, files in os.walk(dst_app):
-        os.chown(root, 0, 0)
+        os.chown(root, console_uid, console_gid)
         for f in files:
-            os.chown(os.path.join(root, f), 0, 0)
+            os.chown(os.path.join(root, f), console_uid, console_gid)
     run(["xattr", "-dr", "com.apple.quarantine", dst_app])
     print("   " + dst_app)
 

@@ -86,6 +86,27 @@ final class VPNModel: ObservableObject {
 
     var lastError: String { status["client_error"] ?? "" }
 
+    // ---- exit path (direct uplink vs chaining through X-VPN's tunnel)
+    var chainMode: String { status["chain"] ?? "direct" }
+    var chainIface: String { status["chain_iface"] ?? "" }
+    var xvpnAvailable: Bool { status["xvpn_available"] == "true" }
+    var xvpnIface: String { status["xvpn_iface"] ?? "" }
+
+    func setChain(_ mode: String) {
+        guard chainMode != mode else { return }
+        busy = true
+        let parsed = Control.parse(Control.send("CHAIN \(mode)", timeout: 20))
+        if let e = parsed["err"] {
+            message = e
+        } else if mode == "xvpn" {
+            message = "exit traffic now leaves through X-VPN\(xvpnIface.isEmpty ? "" : " (\(xvpnIface))")"
+        } else {
+            message = "exit traffic leaves from this Mac's own uplink"
+        }
+        busy = false
+        refresh()
+    }
+
     /// Connected, but the exit node has not sent a single byte back yet.
     var idleWarning: String {
         guard clientRunning, !busy else { return "" }

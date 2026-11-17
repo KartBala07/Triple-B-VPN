@@ -258,7 +258,12 @@ fn serve(args: &[String]) {
                 Some(g.to_string())
             }
         });
-        let gw = explicit_gw.or_else(|| netcfg::iface_router(&base));
+        // A point-to-point tunnel (another VPN's utun) has no DHCP router;
+        // pf still needs a gateway inside route-to, and the interface's own
+        // peer address is the correct next hop there.
+        let gw = explicit_gw
+            .or_else(|| netcfg::iface_router(&base))
+            .or_else(|| netcfg::iface_ipv4(&base));
         (base, gw)
     });
     let scfg = tunnel::ServerCfg { common: cfg, listen, nat_ifs, egress, peer_nat };

@@ -211,6 +211,27 @@ struct ContentView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+            HStack(spacing: 6) {
+                Text("Exit via").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                Picker("", selection: Binding(
+                    get: { model.chainMode },
+                    set: { model.setChain($0) }
+                )) {
+                    Text("This Mac").tag("direct")
+                    Text(model.xvpnAvailable ? "X-VPN" : "X-VPN (not running)").tag("xvpn")
+                        .disabled(!model.xvpnAvailable)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .labelsHidden()
+                .disabled(model.busy || (!model.xvpnAvailable && model.chainMode != "direct"))
+                Spacer(minLength: 0)
+            }
+            if model.chainMode == "xvpn", !model.chainIface.isEmpty {
+                Text("chained through \(model.chainIface) → X-VPN servers")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.green)
+            }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
